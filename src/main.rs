@@ -1,28 +1,51 @@
-use esp_idf_hal::delay::FreeRtos;
-use esp_idf_hal::gpio::{Gpio2, PinDriver};
-use esp_idf_svc::sys::link_patches;
-use esp_idf_svc::log::EspLogger;
-use log::info;
+use ::log::debug;
 
-fn main() {
-    // Necesario para aplicar parches de enlace en el runtime
-    link_patches();
+fn main() -> anyhow::Result<()> {
+    debug!("MAIN: carga dependencias");
+    use esp_idf_svc::hal::adc::{AdcContConfig, AdcContDriver, AdcMeasurement, Attenuated};
+    use esp_idf_svc::hal::peripherals::Peripherals;
+    
+    debug!("PATCHES");
+    esp_idf_svc::sys::link_patches();
+    esp_idf_svc::log::EspLogger::initialize_default();
 
-    // Inicializa el logger para usar las facilidades de logging de ESP
-    EspLogger::initialize_default();
+    debug!("INI: inicializa perifericos y config");
+    let peripherals = Peripherals::take()?;
+    let config = AdcContConfig::default();
 
-    info!("Iniciando programa de parpadeo de LED");
+    debug!("Configura el canal ADC");
+    // Configurar el canal ADC
+    let adc_1_channel_0 = Attenuated::db11(peripherals.pins.gpio34);
 
-    // Configura el pin GPIO2 como salida (conecta el LED a este pin)
-    let mut led = PinDriver::output(unsafe { Gpio2::new() }).unwrap();
+    debug!("Crea el driver ADC continuo");
+    // Crear el driver ADC continuo (requiere I2S0 como segundo parámetro)
+    let mut adc = AdcContDriver::new(
+        peripherals.adc1,
+        peripherals.i2s0, // <-- Añadir el periférico I2S0
+        &config, // <-- Pasar como referencia
+        adc_1_channel_0,
+    )?;
 
+    debug!("Inicia el ADC");
+    adc.start()?;
+
+    debug!("Crea el buffer de lecturas");
+    // Buffer para muestras
+    let mut samples = [AdcMeasurement::default(); 100];
+
+    debug!("Entra en el loop");
     loop {
-        info!("Encendiendo el LED");
-        led.set_high().unwrap(); // Enciende el LED
-        FreeRtos::delay_ms(500); // Espera 500 ms
-
-        info!("Apagando el LED");
-        led.set_low().unwrap(); // Apaga el LED
-        FreeRtos::delay_ms(500); // Espera 500 ms
+        // Intentar leer muestras del ADC
+        match adc.read(&mut samples, 10) {
+            Ok(num_read) => {
+                debug!("Read {} measurements", num_read);
+                for index in 0..num_read {
+                    debug!("Value: {}", samples[index].data());
+                }
+            }
+            Err(e) => {
+                debug!("Error al leer el ADC: {:?}", e); // Mensaje de depuración en caso de error
+            }
+        }
     }
 }
